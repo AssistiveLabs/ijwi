@@ -1,0 +1,229 @@
+/* Ijwi - Stephanie V for Assistive Labs
+
+  /* Typical pin layout used:
+   -----------------------------------------------------
+               MFRC522      Arduino
+               Reader/PCD   Mega
+   Signal      Pin          Pin
+   -----------------------------------------------------------------------------------------
+   RST/Reset   RST          26
+   SPI SS      SDA(SS)      53
+   SPI MOSI    MOSI         51
+   SPI MISO    MISO         50
+   SPI SCK     SCK          52
+
+- summary: this will activate english sound after kinyarwanda once an rfid tag is placed on the device.
+
+*/
+
+//Libraries
+#include <SPI.h>
+#include <SdFat.h>
+#include <MFRC522.h>
+#include <SdFatUtil.h>
+#include <SFEMP3Shield.h>
+#include <Adafruit_NeoPixel.h>
+#ifdef __AVR__
+#include <avr/power.h>
+#endif
+SdFat sd;
+SdFile myFile;
+SFEMP3Shield MP3;
+
+
+//Pins Definitions
+#define RST_PIN         26
+#define SS_PIN          53
+
+//buttons
+#define pushButtonA     30
+
+//initialize button state, high/low DOUBLE CHECK
+int buttonA = 0;
+int code = 0; //initializing code variable
+int code_eng =0;
+
+//SD card Audio Files in order
+#define intro  0
+#define k1   1
+#define k2  2
+#define k3  3
+#define k4  4
+#define k5  5
+#define k6  6
+#define k7   7
+#define k8  8
+#define k9  9
+
+
+//Chip select for SD card
+const int chipSelect = 9;
+
+// Create MFRC522 instance.
+MFRC522 mfrc522(SS_PIN, RST_PIN);
+MFRC522::MIFARE_Key key;
+
+//Init:
+
+void setup() {
+
+Serial.println(F("SetUp starting."));
+
+#if defined (__AVR_ATtiny85__)
+  if (F_CPU == 16000000) clock_prescale_set(clock_div_1);
+#endif
+  // End of trinket special code
+
+  if (!sd.begin(chipSelect, SPI_HALF_SPEED)) sd.initErrorHalt();
+
+  pinMode(pushButtonA, INPUT);
+ 
+
+  Serial.begin(9600); // Initialize serial communications with the PC
+  while (!Serial);    // Do nothing if no serial port is opened (added for Arduinos based on ATMEGA32U4)
+  SPI.begin();        // Init SPI bus
+  mfrc522.PCD_Init(); // Init MFRC522 card
+
+  randomSeed(analogRead(7)); //HERE ESTO para que es?
+  sd.begin(SD_SEL, SPI_HALF_SPEED);
+  MP3.begin();
+  //Volumen
+  union twobyte mp3_vol; // create key_command existing variable that can be both word and double byte of left and right.
+  mp3_vol.word = MP3.getVolume(); // returns a double uint8_t of Left and Right packed into int16_t
+  mp3_vol.byte[1] = 2;
+  MP3.setVolume(mp3_vol.byte[1], mp3_vol.byte[1]);
+
+  // Prepare the key (used both as key A and as key B)
+  // using FFFFFFFFFFFFh which is the default at chip delivery from the factory
+  for (byte i = 0; i < 6; i++) {
+    key.keyByte[i] = 0xFF;
+  }
+
+  Serial.println(F("SetUp Completed."));
+
+  //everytime it turns on it starts with chyme
+  MP3.playTrack(intro);
+  delay(2200);
+  MP3.stopTrack();
+
+}
+
+void loop() {
+
+  /*optional button A operations
+      buttonA = digitalRead(pushButtonA);
+     
+      if (buttonA == LOW && soundC1 == 0) {//HAR
+          MP3.playTrack(1);
+          delay(2500);
+          MP3.stopTrack();
+          soundC1 = soundC1 + 1;
+          delay(100);
+          buttonA=HIGH;
+      }*/
+      
+
+      // Look for new cards
+      if ( ! mfrc522.PICC_IsNewCardPresent())
+        return;
+
+      // Select one of the cards
+      if ( ! mfrc522.PICC_ReadCardSerial())
+        return;
+
+      // Show some details of the PICC (that is: the tag/card)
+      Serial.print(F("Card UID:"));
+      dump_byte_array(mfrc522.uid.uidByte, mfrc522.uid.size);
+      Serial.println();
+      Serial.print(F("PICC type: "));
+      byte piccType = mfrc522.PICC_GetType(mfrc522.uid.sak);
+      //Serial.println(mfrc522.PICC_GetTypeName(piccType));
+
+      // Check for compatibility
+      if (    piccType != MFRC522::PICC_TYPE_MIFARE_MINI
+              &&  piccType != MFRC522::PICC_TYPE_MIFARE_1K
+              &&  piccType != MFRC522::PICC_TYPE_MIFARE_4K) {
+        Serial.println(F("This sample only works with MIFARE Classic cards."));
+        return;
+      }
+
+      // In this sample we use the second sector,
+      // that is: sector #1, covering block #4 up to and including block #7
+      byte sector         = 1;
+      byte blockAddr      = 4;
+      byte dataBlock[]    = {
+        0x01, 0x02, 0x03, 0x04, //  1,  2,   3,  4,
+        0x05, 0x06, 0x07, 0x08, //  5,  6,   7,  8,
+        0x08, 0x09, 0xff, 0x0b, //  9, 10, 255, 12,
+        0x0c, 0x0d, 0x0e, 0x0f  // 13, 14,  15, 16
+      };
+      byte trailerBlock   = 7;
+      byte status;
+      byte buffer[18];
+      byte size = sizeof(buffer);
+
+      // Authenticate using key A
+      Serial.println(F("Authenticating using key A..."));
+      status = mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, trailerBlock, &key, &(mfrc522.uid));
+      if (status != MFRC522::STATUS_OK) {
+        Serial.print(F("PCD_Authenticate() failed: "));
+        //Serial.println(mfrc522.GetStatusCodeName(status));
+        return;
+      }
+
+      // Show the whole sector as it currently is
+      Serial.println(F("Current data in sector:"));
+      mfrc522.PICC_DumpMifareClassicSectorToSerial(&(mfrc522.uid), &key, sector);
+      Serial.println();
+
+      // Read data from the block
+      Serial.print(F("Reading data from block ")); Serial.print(blockAddr);
+      Serial.println(F(" ..."));
+      status = mfrc522.MIFARE_Read(blockAddr, buffer, &size);
+      if (status != MFRC522::STATUS_OK) {
+        Serial.print(F("MIFARE_Read() failed: "));
+        //Serial.println(mfrc522.GetStatusCodeName(status));
+      }
+      Serial.print(F("Data in block ")); Serial.print(blockAddr); Serial.println(F(":"));
+      dump_byte_array(buffer, 16); Serial.println();
+      Serial.println();
+
+
+      //trying out a shorter code
+      // play both english sound and kinyarwandan sound
+
+      // diccionario de codigos: 
+      // palabras en Kinyarwandan: buffer [0]
+
+      code = buffer[0];
+      code_eng=buffer[1];
+
+   //note: averarge sound track duration is around 1000 ms for all files
+   
+        MP3.playTrack(code);
+        delay(1200);
+        MP3.stopTrack();
+       
+        MP3.playTrack(code_eng);
+        delay(1200);
+        MP3.stopTrack();
+      
+
+      // Halt PICC
+      mfrc522.PICC_HaltA();
+      // Stop encryption on PCD
+      mfrc522.PCD_StopCrypto1();
+
+  
+    } 
+
+
+/**
+ * Helper routine to dump a byte array as hex values to Serial.
+ */
+void dump_byte_array(byte *buffer, byte bufferSize) {
+    for (byte i = 0; i < bufferSize; i++) {
+        Serial.print(buffer[i] < 0x10 ? " 0" : " ");
+        Serial.print(buffer[i], HEX);
+    }}
+
