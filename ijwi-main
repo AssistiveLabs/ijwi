@@ -38,7 +38,7 @@ SFEMP3Shield MP3;
 //buttons
 #define pushButtonA     30
 
-//initialize button state, high/low DOUBLE CHECK
+//initialize button state, high/low 
 int buttonA = 0;
 int code = 0; //initializing code variable
 int code_eng =0;
